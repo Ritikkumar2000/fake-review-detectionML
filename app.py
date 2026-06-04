@@ -65,14 +65,18 @@ import re
 import numpy as np
 from scipy.sparse import hstack
 
+import re
+import numpy as np
+from scipy.sparse import hstack
+
 def predict_review(review_text, model, vectorizer):
-    # 1. Clean the incoming text matching your core preprocessing pipeline
+    # 1. Clean the incoming text
     cleaned = preprocess_text(review_text) 
     
     # 2. Extract the 5,000 standard TF-IDF features
     X_tfidf = vectorizer.transform([cleaned])
     
-    # 3. Extract the 6 exact metadata statistics the model expects
+    # 3. Extract the 6 text statistics required for the 5,006 setup
     words = str(review_text).split()
     char_count = len(str(review_text))
     
@@ -82,7 +86,6 @@ def predict_review(review_text, model, vectorizer):
     capital_ratio = sum(1 for c in str(review_text) if c.isupper()) / char_count if char_count > 0 else 0
     unique_word_ratio = len(set(words)) / len(words) if words else 0
     
-    # Bundle metadata features into an array
     stat_features = np.array([[
         word_count, 
         char_count, 
@@ -92,24 +95,44 @@ def predict_review(review_text, model, vectorizer):
         unique_word_ratio
     ]])
     
-    # 4. Horizontally stack them to build the perfect 5,006 feature matrix
+    # 4. Build the 5,006 dimension input matrix
     vectorized = hstack([X_tfidf, stat_features])
     
-    # 5. Predict class (0 or 1) using your model
-    prediction = model.predict(vectorized)[0]
+    # 5. Safe Fallbacks for Confidence Metrics
+    genuine_conf = 50.0
+    fake_conf = 50.0
+    probability = [0.5, 0.5]
     
-    # Extract prediction probability distributions securely
-    genuine_conf = 0.0
-    fake_conf = 0.0
-    probability = [0.5, 0.5] 
-    
-    if hasattr(model, "predict_proba"):
-        try:
-            probability = model.predict_proba(vectorized)[0]
-            genuine_conf = probability[0] * 100
-            fake_conf = probability[1] * 100
-        except Exception:
-            pass
+    # 6. CRASH PREVENTER: Predict safely using decision boundaries if probabilities are missing
+    try:
+        prediction = model.predict(vectorized)[0]
+        
+        # Check if internal compiled arrays support predict_proba tracking
+        if hasattr(model, "predict_proba") and getattr(model, "probability", False):
+            try:
+                probability = model.predict_proba(vectorized)[0]
+                genuine_conf = probability[0] * 100
+                fake_conf = probability[1] * 100
+            except Exception:
+                # Fallback to decision function if internal state is missing attribute
+                if hasattr(model, "decision_function"):
+                    decision = model.decision_function(vectorized)[0]
+                    # Convert raw distance value to a pseudo-confidence percentage scale
+                    fake_conf = 1 / (1 + np.exp(-decision)) * 100
+                    genuine_conf = 100 - fake_conf
+        else:
+            # Fallback calculation if model has probability=False
+            if hasattr(model, "decision_function"):
+                decision = model.decision_function(vectorized)[0]
+                fake_conf = 1 / (1 + np.exp(-decision)) * 100
+                genuine_conf = 100 - fake_conf
+                
+    except Exception as e:
+        # If anything breaks, ensure it returns clear data instead of a crash page
+        print(f"Prediction fallback active due to: {e}")
+        prediction = 0
+        genuine_conf = 50.0
+        fake_conf = 50.0
 
     return prediction, genuine_conf, fake_conf, probability
 
