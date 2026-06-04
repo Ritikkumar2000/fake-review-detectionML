@@ -61,46 +61,56 @@ def preprocess_text(text):
     return cleaned
 
 # UPDATED Prediction function with detailed debugging
-def predict_review(text, model, vectorizer):
-    """
-    Predict if review is fake or genuine
-    Returns: prediction, genuine_confidence, fake_confidence, probabilities
-    """
-    if not text or not text.strip():
-        return None, 0, 0, None
+import re
+import numpy as np
+from scipy.sparse import hstack
+
+def predict_review(review_text, model, vectorizer):
+    # 1. Clean the incoming text matching your core preprocessing pipeline
+    cleaned = preprocess_text(review_text) 
     
-    # Preprocess
-    cleaned = preprocess_text(text)
+    # 2. Extract the 5,000 standard TF-IDF features
+    X_tfidf = vectorizer.transform([cleaned])
     
-    # Debug: show cleaned text
-    if st.session_state.get('show_debug', False):
-        st.write(f"**Original (first 100 chars):** {text[:100]}")
-        st.write(f"**After preprocessing:** '{cleaned}'")
+    # 3. Extract the 6 exact metadata statistics the model expects
+    words = str(review_text).split()
+    char_count = len(str(review_text))
     
-    if not cleaned:
-        return None, 0, 0, None
+    word_count = len(words)
+    avg_word_length = np.mean([len(w) for w in words]) if words else 0
+    exclamation_count = str(review_text).count('!')
+    capital_ratio = sum(1 for c in str(review_text) if c.isupper()) / char_count if char_count > 0 else 0
+    unique_word_ratio = len(set(words)) / len(words) if words else 0
     
-    # Vectorize
-    vectorized = vectorizer.transform([cleaned])
+    # Bundle metadata features into an array
+    stat_features = np.array([[
+        word_count, 
+        char_count, 
+        avg_word_length, 
+        exclamation_count, 
+        capital_ratio, 
+        unique_word_ratio
+    ]])
     
-    # Debug: show vectorization info
-    if st.session_state.get('show_debug', False):
-        st.write(f"**Feature vector shape:** {vectorized.shape}")
-        st.write(f"**Non-zero features:** {vectorized.nnz}")
+    # 4. Horizontally stack them to build the perfect 5,006 feature matrix
+    vectorized = hstack([X_tfidf, stat_features])
     
-    # Predict
+    # 5. Predict class (0 or 1) using your model
     prediction = model.predict(vectorized)[0]
-    probability = model.predict_proba(vectorized)[0]
     
-    # Calculate confidences
-    genuine_conf = probability[0] * 100
-    fake_conf = probability[1] * 100
+    # Extract prediction probability distributions securely
+    genuine_conf = 0.0
+    fake_conf = 0.0
+    probability = [0.5, 0.5] 
     
-    # Debug: show raw probabilities
-    if st.session_state.get('show_debug', False):
-        st.write(f"**Raw probabilities:** Genuine={probability[0]:.6f}, Fake={probability[1]:.6f}")
-        st.write(f"**Predicted class:** {prediction} ({'Fake' if prediction == 1 else 'Genuine'})")
-    
+    if hasattr(model, "predict_proba"):
+        try:
+            probability = model.predict_proba(vectorized)[0]
+            genuine_conf = probability[0] * 100
+            fake_conf = probability[1] * 100
+        except Exception:
+            pass
+
     return prediction, genuine_conf, fake_conf, probability
 
 # Initialize
