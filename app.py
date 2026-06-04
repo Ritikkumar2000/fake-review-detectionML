@@ -69,6 +69,10 @@ import re
 import numpy as np
 from scipy.sparse import hstack
 
+import re
+import numpy as np
+from scipy.sparse import hstack
+
 def predict_review(review_text, model, vectorizer):
     # 1. Clean the incoming text
     cleaned = preprocess_text(review_text) 
@@ -98,41 +102,13 @@ def predict_review(review_text, model, vectorizer):
     # 4. Build the 5,006 dimension input matrix
     vectorized = hstack([X_tfidf, stat_features])
     
-    # 5. Safe Fallbacks for Confidence Metrics
-    genuine_conf = 50.0
-    fake_conf = 50.0
-    probability = [0.5, 0.5]
+    # 5. Get true real predictions and probabilities directly from the model
+    prediction = model.predict(vectorized)[0]
+    probability = model.predict_proba(vectorized)[0]
     
-    # 6. CRASH PREVENTER: Predict safely using decision boundaries if probabilities are missing
-    try:
-        prediction = model.predict(vectorized)[0]
-        
-        # Check if internal compiled arrays support predict_proba tracking
-        if hasattr(model, "predict_proba") and getattr(model, "probability", False):
-            try:
-                probability = model.predict_proba(vectorized)[0]
-                genuine_conf = probability[0] * 100
-                fake_conf = probability[1] * 100
-            except Exception:
-                # Fallback to decision function if internal state is missing attribute
-                if hasattr(model, "decision_function"):
-                    decision = model.decision_function(vectorized)[0]
-                    # Convert raw distance value to a pseudo-confidence percentage scale
-                    fake_conf = 1 / (1 + np.exp(-decision)) * 100
-                    genuine_conf = 100 - fake_conf
-        else:
-            # Fallback calculation if model has probability=False
-            if hasattr(model, "decision_function"):
-                decision = model.decision_function(vectorized)[0]
-                fake_conf = 1 / (1 + np.exp(-decision)) * 100
-                genuine_conf = 100 - fake_conf
-                
-    except Exception as e:
-        # If anything breaks, ensure it returns clear data instead of a crash page
-        print(f"Prediction fallback active due to: {e}")
-        prediction = 0
-        genuine_conf = 50.0
-        fake_conf = 50.0
+    # Calculate real confidences based on the model's math
+    genuine_conf = probability[0] * 100
+    fake_conf = probability[1] * 100
 
     return prediction, genuine_conf, fake_conf, probability
 
